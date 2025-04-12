@@ -181,30 +181,47 @@ class VannaBase(ABC):
             str: The extracted SQL query.
         """
 
-        # If the llm_response contains a CTE (with clause), extract the last sql between WITH and ;
-        sqls = re.findall(r"\bWITH\b .*?;", llm_response, re.DOTALL)
+        import re
+        """
+        Extracts the SQL query from the LLM response, handling various formats including:
+        - WITH clause
+        - SELECT statement
+        - CREATE TABLE AS SELECT
+        - Markdown code blocks
+        """
+
+        # Match CREATE TABLE ... AS SELECT
+        sqls = re.findall(r"\bCREATE\s+TABLE\b.*?\bAS\b.*?;", llm_response, re.DOTALL | re.IGNORECASE)
         if sqls:
             sql = sqls[-1]
             self.log(title="Extracted SQL", message=f"{sql}")
             return sql
 
-        # If the llm_response is not markdown formatted, extract last sql by finding select and ; in the response
-        sqls = re.findall(r"SELECT.*?;", llm_response, re.DOTALL)
+        # Match WITH clause (CTEs)
+        sqls = re.findall(r"\bWITH\b .*?;", llm_response, re.DOTALL | re.IGNORECASE)
         if sqls:
             sql = sqls[-1]
             self.log(title="Extracted SQL", message=f"{sql}")
             return sql
 
-        # If the llm_response contains a markdown code block, with or without the sql tag, extract the last sql from it
-        sqls = re.findall(r"```sql\n(.*)```", llm_response, re.DOTALL)
+        # Match SELECT ... ;
+        sqls = re.findall(r"\bSELECT\b .*?;", llm_response, re.DOTALL | re.IGNORECASE)
         if sqls:
             sql = sqls[-1]
             self.log(title="Extracted SQL", message=f"{sql}")
             return sql
 
-        sqls = re.findall(r"```(.*)```", llm_response, re.DOTALL)
+        # Match ```sql ... ``` blocks
+        sqls = re.findall(r"```sql\s*\n(.*?)```", llm_response, re.DOTALL | re.IGNORECASE)
         if sqls:
-            sql = sqls[-1]
+            sql = sqls[-1].strip()
+            self.log(title="Extracted SQL", message=f"{sql}")
+            return sql
+
+        # Match any ``` ... ``` code blocks
+        sqls = re.findall(r"```(.*?)```", llm_response, re.DOTALL | re.IGNORECASE)
+        if sqls:
+            sql = sqls[-1].strip()
             self.log(title="Extracted SQL", message=f"{sql}")
             return sql
 
@@ -306,7 +323,7 @@ class VannaBase(ABC):
 
         message_log = [
             self.system_message(
-                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe SQL query for this question was: {sql}\n\nThe following is a pandas DataFrame with the results of the query: \n{df.to_markdown()}\n\n"
+                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe SQL query for this question was: {sql}\n\nThe following is a pandas DataFrame with the results of the query: \n{df.head(25).to_markdown()}\n\n"
             ),
             self.user_message(
                 f"Generate a list of {n_questions} followup questions that the user might ask about this data. Respond with a list of questions, one per line. Do not answer with any explanations -- just the questions. Remember that there should be an unambiguous SQL query that can be generated from the question. Prefer questions that are answerable outside of the context of this conversation. Prefer questions that are slight modifications of the SQL query that was generated that allow digging deeper into the data. Each question will be turned into a button that the user can click to generate a new SQL query so don't use 'example' type questions. Each question must have a one-to-one correspondence with an instantiated SQL query." +
@@ -689,6 +706,9 @@ class VannaBase(ABC):
         return response
 
     def _extract_python_code(self, markdown_string: str) -> str:
+        # Strip whitespace to avoid indentation errors in LLM-generated code
+        markdown_string = markdown_string.strip()
+
         # Regex pattern to match Python code blocks
         pattern = r"```[\w\s]*python\n([\s\S]*?)```|```([\s\S]*?)```"
 
@@ -1167,7 +1187,7 @@ class VannaBase(ABC):
         vn.connect_to_oracle(
         user="username",
         password="password",
-        dns="host:port/sid",
+        dsn="host:port/sid",
         )
         ```
         Args:
